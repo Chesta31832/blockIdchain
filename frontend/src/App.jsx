@@ -330,6 +330,9 @@ function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
   const [status, setStatus] = useState("");
   const [steps, setSteps] = useState([]);
   const [result, setResult] = useState(null);
+  const [verifyError, setVerifyError] = useState("");
+  const [verifyResult, setVerifyResult] = useState(null);
+  const [verifySteps, setVerifySteps] = useState([]);
 
   const pushStep = (label, state = "pending") => {
     setSteps((prev) => {
@@ -342,7 +345,53 @@ function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
     setSteps((prev) => prev.map((s) => (s.label === label ? { ...s, state } : s)));
   };
 
-  const handleVerify = async (e) => {
+  const handleVerify = async () => {
+    setVerifyError('');
+    setVerifyResult(null);
+    const steps = [];
+    const addStep = (label, status = 'pending', detail = '') => {
+      steps.push({ label, status, detail });
+      setVerifySteps([...steps]);
+    };
+
+    if (!certId) {
+      setVerifyError('Please provide a certificate ID.');
+      return;
+    }
+
+    addStep('Fetch on-chain record');
+    try {
+      // open verification: no issuer-account restriction
+      const res = await axios.get(`${backendBase}/cert/${certId}`);
+      const cert = res.data?.cert;
+      if (!cert) throw new Error('Certificate not found');
+
+      addStep('Download file from IPFS');
+      const fileRes = await fetch(ipfsGateway(cert.ipfsCid));
+      if (!fileRes.ok) throw new Error(`IPFS fetch failed: ${fileRes.status}`);
+      const fileBuf = await fileRes.arrayBuffer();
+
+      addStep('Re-hash document');
+      const hashHex = await hashFile(new Blob([fileBuf]));
+      const hashMatch = hashHex === cert.documentHash;
+
+      addStep('Verify signature');
+      const sigOk = await verifySignature(cert.publicKey, hexToBytes(cert.documentHash), cert.signature);
+
+      addStep('Done', 'done');
+      setVerifyResult({
+        ...cert,
+        recomputedHash: hashHex,
+        hashMatch,
+        signatureValid: sigOk,
+      });
+    } catch (err) {
+      addStep('Error', 'error', err.message || 'Verify failed');
+      setVerifyError(err.message || 'Verify failed');
+    }
+  };
+
+  const handleVerifyLegacy = async (e) => {
     e.preventDefault();
     setResult(null);
     setSteps([]);
@@ -358,11 +407,11 @@ function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
       const certRes = await axios.get(`${backendBase}/cert/${certId}`);
       const cert = certRes.data.cert;
       const issuerMatch = cert.issuer?.toLowerCase() === selectedAccount.toLowerCase();
-      if (!issuerMatch) {
-        setStatus("Selected account is not the issuer of this certificate.");
-        setStepState("Fetch certificate", "error");
-        return;
-      }
+      // if (!issuerMatch) {
+      //   setStatus("Selected account is not the issuer of this certificate.");
+      //   setStepState("Fetch certificate", "error");
+      //   return;
+      // }
       setStepState("Fetch certificate", "done");
 
       pushStep("Download from IPFS", "active");
@@ -417,7 +466,7 @@ function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
         </div>
         <div className="badge muted">Trustless check</div>
       </div>
-      <form onSubmit={handleVerify} className="form">
+      <form onSubmit={handleVerifyLegacy} className="form">
         <label>
           Cert ID (0x...)
           <input value={certId} onChange={(e) => setCertId(e.target.value)} placeholder="0x..." required />
@@ -437,6 +486,20 @@ function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
           <p><strong>Issued at:</strong> {new Date(result.issuedAt).toLocaleString()}</p>
         </div>
       )}
+      {verifyResult && (
+        <div className="panel success">
+          <div className="panel-title">Verification Result</div>
+          <div className="kv"><span>Issuer</span><span>{verifyResult.issuer || '—'}</span></div>
+          <div className="kv"><span>IPFS CID</span><span>{verifyResult.ipfsCid}</span></div>
+          <div className="kv"><span>On-chain Hash</span><code>{verifyResult.documentHash}</code></div>
+          <div className="kv"><span>Recomputed Hash</span><code>{verifyResult.recomputedHash}</code></div>
+          <div className="kv"><span>Hash Match</span><span className={verifyResult.hashMatch ? 'pill pill-ok' : 'pill pill-bad'}>{verifyResult.hashMatch ? 'Yes' : 'No'}</span></div>
+          <div className="kv"><span>Signature Valid</span><span className={verifyResult.signatureValid ? 'pill pill-ok' : 'pill pill-bad'}>{verifyResult.signatureValid ? 'Yes' : 'No'}</span></div>
+          <div className="kv"><span>Public Key</span><code className="multiline">{verifyResult.publicKey}</code></div>
+          <div className="kv"><span>Issued At</span><span>{verifyResult.issuedAt ? new Date(Number(verifyResult.issuedAt) * 1000).toISOString() : '—'}</span></div>
+        </div>
+      )}
+      {verifyError && <div className="error">{verifyError}</div>}
     </section>
   );
 }

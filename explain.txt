@@ -1,0 +1,30 @@
+BlockIDChain in Plain Terms
+
+What it is: A decentralized PKI for documents. It anchors document fingerprints (hash), issuer public key, and signature on Ethereum, while the full file lives on IPFS. Verification is trustless: anyone can confirm authenticity without a central certificate authority.
+Why it matters: Removes single points of failure (no CA to hack/revoke), gives issuers self-sovereign control over keys, and makes tampering obvious because any file change breaks the on-chain hash/signature check.
+How it works (flow):
+Issue: Browser generates RSA keys, hashes the file (SHA-256), signs the hash with the private key, uploads the file to IPFS (gets a CID), then writes the hash/public key/signature/CID to the contract.
+Verify: Fetch the on-chain record, pull the file from IPFS via CID, re-hash, and verify the signature with the stored public key. If both match, the document is authentic.
+Roles & accounts: Issuing uses MetaMask to pick a Ganache account; the issuer address is stored on-chain. Verification checks that the selected account matches the issuer (per your current rule) and then performs the cryptographic checks.
+Significance
+
+Security: On-chain immutability + cryptographic signatures make for strong tamper evidence; no reliance on a single CA.
+Privacy & scalability: Heavy files stay off-chain (IPFS); the chain only stores small metadata (hash, public key, signature, CID).
+Self-sovereign: Keys are generated client-side; private keys never leave the user’s machine.
+Auditability: Every issuance is a transaction with a timestamp and issuer address—easy to audit.
+Example Usage Scenarios
+
+Academic credentials: Universities issue diplomas; employers verify by CID/hash/signature without calling the university.
+Professional licenses: Regulatory bodies issue licenses; clients verify authenticity before engagement.
+Supply chain docs: Certificates of origin or inspection reports anchored on-chain to prevent substitution.
+NDAs/contracts: Final signed PDFs hashed and anchored; later disputes are resolved by re-hashing and verifying the on-chain signature.
+How to interact (current app)
+
+Issue: Connect MetaMask → pick an account → enter subject ID + upload file → approve the contract tx in MetaMask. The UI returns certId, tx hash, CID, and hash; private key is auto-downloaded—store it safely.
+Verify: Connect MetaMask → pick the issuer account → paste certId → the app fetches on-chain data, downloads from IPFS, re-hashes, and checks signature. It reports hash match and signature validity.
+Key pieces under the hood
+
+Smart contract (BlockIDChain.sol): Stores subjectId, issuer address, public key, document hash, IPFS CID, signature, and timestamp; emits CertificateRegistered.
+Frontend (React + WebCrypto + MetaMask): Generates RSA keys, hashes/signs files, uploads via backend to IPFS, and calls the contract with the selected wallet account.
+Storage: IPFS via Apillon for content-addressed files; CID is persisted on-chain.
+Network: Ganache for local Ethereum dev; MetaMask to sign transactions with any of your configured Ganache accounts.
