@@ -73,12 +73,19 @@ async function importPublicKeyFromPem(pem) {
   );
 }
 
-function Section({ title, children }) {
+function StepList({ steps }) {
   return (
-    <section className="card">
-      <h2>{title}</h2>
-      {children}
-    </section>
+    <div className="steps">
+      {steps.map((s) => (
+        <div key={s.label} className={`step ${s.state}`}>
+          <span className="dot" />
+          <div>
+            <div className="step-label">{s.label}</div>
+            <div className="step-state">{s.state}</div>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -86,8 +93,12 @@ export default function App() {
   return (
     <div className="page">
       <header>
-        <h1>BlockIDChain</h1>
-        <p>Issue and verify documents with blockchain + IPFS. RSA keys stay in your browser.</p>
+        <div>
+          <p className="eyebrow">Decentralized PKI</p>
+          <h1>BlockIDChain</h1>
+          <p>Issue and verify documents with Ganache + Apillon IPFS. Keys stay in your browser.</p>
+        </div>
+        <div className="pill">RSA · SHA-256 · IPFS · Ethereum</div>
       </header>
       <div className="grid">
         <IssueForm />
@@ -101,27 +112,45 @@ function IssueForm() {
   const [subjectId, setSubjectId] = useState("");
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
+  const [steps, setSteps] = useState([]);
   const [result, setResult] = useState(null);
+
+  const pushStep = (label, state = "pending") => {
+    setSteps((prev) => {
+      const existing = prev.filter((s) => s.label !== label);
+      return [...existing, { label, state }];
+    });
+  };
+
+  const setStepState = (label, state) => {
+    setSteps((prev) => prev.map((s) => (s.label === label ? { ...s, state } : s)));
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setResult(null);
+    setSteps([]);
 
     if (!file) {
       setStatus("Choose a file first");
       return;
     }
+    pushStep("Generate RSA keys", "active");
     setStatus("Generating RSA keys...");
 
     try {
       const { publicKey, privateKey, publicKeyPem, privateKeyPem } = await generateRsaKeyPair();
+      setStepState("Generate RSA keys", "done");
       downloadTextFile(`private-key-${Date.now()}.pem`, privateKeyPem);
 
+      pushStep("Hash document", "active");
       setStatus("Hashing document...");
       const fileBuffer = await file.arrayBuffer();
       const hashBuffer = await hashArrayBuffer(fileBuffer);
       const documentHashHex = hexFromBuffer(hashBuffer);
+      setStepState("Hash document", "done");
 
+      pushStep("Sign hash", "active");
       setStatus("Signing hash with your RSA key...");
       const signatureBuffer = await window.crypto.subtle.sign(
         { name: "RSASSA-PKCS1-v1_5" },
@@ -129,7 +158,9 @@ function IssueForm() {
         hashBuffer
       );
       const signatureHex = hexFromBuffer(signatureBuffer);
+      setStepState("Sign hash", "done");
 
+      pushStep("Upload to IPFS", "active");
       setStatus("Uploading to IPFS via Apillon...");
       const formData = new FormData();
       formData.append("file", file, file.name);
@@ -147,7 +178,9 @@ function IssueForm() {
         console.error("Upload response missing CID", uploadRes.data);
         throw new Error("Upload did not return CID");
       }
+      setStepState("Upload to IPFS", "done");
 
+      pushStep("Register on-chain", "active");
       setStatus("Registering on-chain...");
       const registerRes = await axios.post(`${backendBase}/cert/register`, {
         subjectId,
@@ -164,16 +197,25 @@ function IssueForm() {
         registerRes.data?.data?.certId ||
         "(check contract)";
       setResult({ certId, txHash: registerRes.data.txHash, cid, documentHashHex, publicKeyPem });
+      setStepState("Register on-chain", "done");
       setStatus("Done. Private key downloaded—keep it safe.");
     } catch (err) {
       console.error(err);
       const detail = err.response?.data?.error || err.message;
       setStatus(`Error: ${detail}`);
+      setStepState("Register on-chain", "error");
     }
   };
 
   return (
-    <Section title="Issue Certificate">
+    <section className="card">
+      <div className="card-header">
+        <div>
+          <p className="eyebrow">Issuer</p>
+          <h2>Issue Certificate</h2>
+        </div>
+        <div className="badge">On-chain + IPFS</div>
+      </div>
       <form onSubmit={handleSubmit} className="form">
         <label>
           Subject ID
@@ -185,7 +227,8 @@ function IssueForm() {
         </label>
         <button type="submit">Issue</button>
       </form>
-      <p className="status">{status}</p>
+      <div className="status-line">{status}</div>
+      <StepList steps={steps} />
       {result && (
         <div className="result">
           <p><strong>Cert ID:</strong> {result.certId}</p>
@@ -198,33 +241,53 @@ function IssueForm() {
           </details>
         </div>
       )}
-    </Section>
+    </section>
   );
 }
 
 function VerifyForm() {
   const [certId, setCertId] = useState("");
   const [status, setStatus] = useState("");
+  const [steps, setSteps] = useState([]);
   const [result, setResult] = useState(null);
+
+  const pushStep = (label, state = "pending") => {
+    setSteps((prev) => {
+      const existing = prev.filter((s) => s.label !== label);
+      return [...existing, { label, state }];
+    });
+  };
+
+  const setStepState = (label, state) => {
+    setSteps((prev) => prev.map((s) => (s.label === label ? { ...s, state } : s)));
+  };
 
   const handleVerify = async (e) => {
     e.preventDefault();
     setResult(null);
+    setSteps([]);
+    pushStep("Fetch certificate", "active");
     setStatus("Fetching certificate...");
 
     try {
       const certRes = await axios.get(`${backendBase}/cert/${certId}`);
       const cert = certRes.data.cert;
+      setStepState("Fetch certificate", "done");
 
+      pushStep("Download from IPFS", "active");
       setStatus("Downloading file from IPFS...");
       const fileRes = await fetch(`${ipfsGateway}/${cert.ipfsCid}`);
       const fileBuffer = await fileRes.arrayBuffer();
+      setStepState("Download from IPFS", "done");
 
+      pushStep("Hash file", "active");
       setStatus("Hashing file...");
       const hashBuffer = await hashArrayBuffer(fileBuffer);
       const computedHashHex = hexFromBuffer(hashBuffer);
       const hashMatches = computedHashHex.toLowerCase() === cert.documentHash.toLowerCase();
+      setStepState("Hash file", "done");
 
+      pushStep("Verify signature", "active");
       setStatus("Verifying signature...");
       const publicKey = await importPublicKeyFromPem(cert.publicKey);
       const signatureBuffer = bufferFromHex(cert.signature);
@@ -234,6 +297,7 @@ function VerifyForm() {
         signatureBuffer,
         hashBuffer
       );
+      setStepState("Verify signature", "done");
 
       setResult({
         ipfsCid: cert.ipfsCid,
@@ -249,11 +313,19 @@ function VerifyForm() {
       console.error(err);
       const detail = err.response?.data?.error || err.message;
       setStatus(`Error: ${detail}`);
+      setStepState("Verify signature", "error");
     }
   };
 
   return (
-    <Section title="Verify Certificate">
+    <section className="card">
+      <div className="card-header">
+        <div>
+          <p className="eyebrow">Verifier</p>
+          <h2>Verify Certificate</h2>
+        </div>
+        <div className="badge muted">Trustless check</div>
+      </div>
       <form onSubmit={handleVerify} className="form">
         <label>
           Cert ID (0x...)
@@ -261,7 +333,8 @@ function VerifyForm() {
         </label>
         <button type="submit">Verify</button>
       </form>
-      <p className="status">{status}</p>
+      <div className="status-line">{status}</div>
+      <StepList steps={steps} />
       {result && (
         <div className="result">
           <p><strong>IPFS CID:</strong> {result.ipfsCid}</p>
@@ -273,6 +346,6 @@ function VerifyForm() {
           <p><strong>Issued at:</strong> {new Date(result.issuedAt).toLocaleString()}</p>
         </div>
       )}
-    </Section>
+    </section>
   );
 }
