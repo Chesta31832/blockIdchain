@@ -1,0 +1,17 @@
+{
+  "name": "blockidchain-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "contract",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "bootstrap": "npm install --workspaces",
+    "contract:test": "npm --workspace contract test",
+    "contract:deploy": "npm --workspace contract run deploy",
+    "backend:dev": "npm --workspace backend run dev",
+    "frontend:dev": "npm --workspace frontend run dev"
+  }
+}
