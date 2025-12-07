@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { ethers } from "ethers";
+import contractInfo from "./contract.json";
 
 const backendBase = import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
 const ipfsGateway = "https://ipfs.io/ipfs";
@@ -90,6 +92,56 @@ function StepList({ steps }) {
 }
 
 export default function App() {
+  const [accounts, setAccounts] = useState([]);
+  const [selectedAccount, setSelectedAccount] = useState("");
+  const [chainId, setChainId] = useState("");
+  const [walletStatus, setWalletStatus] = useState("Not connected");
+
+  useEffect(() => {
+    if (!window.ethereum) {
+      setWalletStatus("MetaMask not found");
+      return;
+    }
+    const handleAccounts = (accs) => {
+      setAccounts(accs);
+      setSelectedAccount((prev) => (accs.includes(prev) ? prev : accs[0] || ""));
+      setWalletStatus(accs.length ? "Connected" : "Not connected");
+    };
+    const handleChain = (id) => setChainId(id);
+
+    window.ethereum.request({ method: "eth_accounts" }).then(handleAccounts).catch(() => {});
+    window.ethereum.request({ method: "eth_chainId" }).then(handleChain).catch(() => {});
+    window.ethereum.on("accountsChanged", handleAccounts);
+    window.ethereum.on("chainChanged", handleChain);
+    return () => {
+      window.ethereum?.removeListener("accountsChanged", handleAccounts);
+      window.ethereum?.removeListener("chainChanged", handleChain);
+    };
+  }, []);
+
+  const provider = useMemo(() => {
+    if (!window.ethereum) return null;
+    return new ethers.BrowserProvider(window.ethereum);
+  }, [chainId]);
+
+  const connectWallet = async () => {
+    if (!window.ethereum) {
+      setWalletStatus("MetaMask not found");
+      return;
+    }
+    try {
+      const accs = await window.ethereum.request({ method: "eth_requestAccounts" });
+      setAccounts(accs);
+      setSelectedAccount(accs[0] || "");
+      const id = await window.ethereum.request({ method: "eth_chainId" });
+      setChainId(id);
+      setWalletStatus("Connected");
+    } catch (err) {
+      console.error(err);
+      setWalletStatus("Connection rejected");
+    }
+  };
+
   return (
     <div className="page">
       <header>
@@ -100,15 +152,44 @@ export default function App() {
         </div>
         <div className="pill">RSA · SHA-256 · IPFS · Ethereum</div>
       </header>
+      <div className="wallet-bar card">
+        <div>
+          <div className="eyebrow">Wallet</div>
+          <div className="wallet-row">
+            <button type="button" onClick={connectWallet}>Connect MetaMask</button>
+            <select
+              value={selectedAccount}
+              onChange={(e) => setSelectedAccount(e.target.value)}
+              disabled={!accounts.length}
+            >
+              <option value="">Select account</option>
+              {accounts.map((acct) => (
+                <option key={acct} value={acct}>{acct}</option>
+              ))}
+            </select>
+          </div>
+          <div className="status-line">{walletStatus}{chainId ? ` · chain ${parseInt(chainId, 16)}` : ""}</div>
+        </div>
+      </div>
       <div className="grid">
-        <IssueForm />
-        <VerifyForm />
+        <IssueForm
+          provider={provider}
+          selectedAccount={selectedAccount}
+          accounts={accounts}
+          connectWallet={connectWallet}
+        />
+        <VerifyForm
+          provider={provider}
+          selectedAccount={selectedAccount}
+          accounts={accounts}
+          connectWallet={connectWallet}
+        />
       </div>
     </div>
   );
 }
 
-function IssueForm() {
+function IssueForm({ provider, selectedAccount, accounts, connectWallet }) {
   const [subjectId, setSubjectId] = useState("");
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
@@ -130,6 +211,11 @@ function IssueForm() {
     e.preventDefault();
     setResult(null);
     setSteps([]);
+
+    if (!provider || !selectedAccount) {
+      setStatus("Connect MetaMask and pick an account");
+      return;
+    }
 
     if (!file) {
       setStatus("Choose a file first");
@@ -181,22 +267,16 @@ function IssueForm() {
       setStepState("Upload to IPFS", "done");
 
       pushStep("Register on-chain", "active");
-      setStatus("Registering on-chain...");
-      const registerRes = await axios.post(`${backendBase}/cert/register`, {
-        subjectId,
-        publicKey: publicKeyPem,
-        documentHash: documentHashHex,
-        ipfsCid: cid,
-        signatureHex,
-      });
+      setStatus("Registering on-chain via MetaMask...");
 
-      const certId =
-        registerRes.data.certId ||
-        registerRes.data?.event?.certId ||
-        registerRes.data?.event?.[0] ||
-        registerRes.data?.data?.certId ||
-        "(check contract)";
-      setResult({ certId, txHash: registerRes.data.txHash, cid, documentHashHex, publicKeyPem });
+      const signer = await provider.getSigner(selectedAccount);
+      const contract = new ethers.Contract(contractInfo.address, contractInfo.abi, signer);
+      const predictedCertId = await contract.getCertificateId(subjectId, publicKeyPem, documentHashHex);
+      const tx = await contract.registerCertificate(subjectId, publicKeyPem, documentHashHex, cid, signatureHex);
+      const receipt = await tx.wait();
+      const txHash = receipt?.hash;
+
+      setResult({ certId: predictedCertId, txHash, cid, documentHashHex, publicKeyPem, issuer: selectedAccount });
       setStepState("Register on-chain", "done");
       setStatus("Done. Private key downloaded—keep it safe.");
     } catch (err) {
@@ -245,7 +325,7 @@ function IssueForm() {
   );
 }
 
-function VerifyForm() {
+function VerifyForm({ provider, selectedAccount, accounts, connectWallet }) {
   const [certId, setCertId] = useState("");
   const [status, setStatus] = useState("");
   const [steps, setSteps] = useState([]);
@@ -266,12 +346,23 @@ function VerifyForm() {
     e.preventDefault();
     setResult(null);
     setSteps([]);
+
+    if (!provider || !selectedAccount) {
+      setStatus("Connect MetaMask and pick an account");
+      return;
+    }
     pushStep("Fetch certificate", "active");
     setStatus("Fetching certificate...");
 
     try {
       const certRes = await axios.get(`${backendBase}/cert/${certId}`);
       const cert = certRes.data.cert;
+      const issuerMatch = cert.issuer?.toLowerCase() === selectedAccount.toLowerCase();
+      if (!issuerMatch) {
+        setStatus("Selected account is not the issuer of this certificate.");
+        setStepState("Fetch certificate", "error");
+        return;
+      }
       setStepState("Fetch certificate", "done");
 
       pushStep("Download from IPFS", "active");

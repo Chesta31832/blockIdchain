@@ -112,6 +112,14 @@ input, button {
   color: var(--text);
   font-size: 14px;
 }
+select {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0b1220;
+  color: var(--text);
+  font-size: 14px;
+}
 input:focus {
   outline: 2px solid var(--accent);
 }
@@ -145,6 +153,16 @@ button:active { transform: translateY(1px); }
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.wallet-bar {
+  margin-bottom: 14px;
+}
+.wallet-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0;
 }
 .step {
   display: flex;
