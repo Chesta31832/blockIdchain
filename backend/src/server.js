@@ -1,13 +1,14 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import axios from "axios";
 // Apillon SDK handles uploads; axios/form-data no longer required for uploads
 import { ethers } from "ethers";
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
-import { uploadToApillon } from "./utils/apillon.js";
+import { uploadToPinata } from "./utils/pinata.js";
 
 dotenv.config();
 
@@ -19,10 +20,6 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
 const GANACHE_RPC_URL = process.env.GANACHE_RPC_URL || "http://127.0.0.1:7545";
 let contractAddress = process.env.CONTRACT_ADDRESS;
 const SIGNER_PRIVATE_KEY = process.env.SIGNER_PRIVATE_KEY;
-const APILLON_API_KEY = process.env.APILLON_API_KEY;
-const APILLON_API_SECRET = process.env.APILLON_API_SECRET;
-const APILLON_BUCKET_ID = process.env.APILLON_BUCKET_ID;
-const APILLON_API_BASE = (process.env.APILLON_API_BASE || "https://api.apillon.io").replace(/\/$/, "");
 
 const contractArtifactPath = path.join(__dirname, "contract.json");
 let contractAbi = [];
@@ -52,7 +49,7 @@ const app = express();
 app.use(cors({ origin: FRONTEND_ORIGIN, credentials: true }));
 app.use(express.json({ limit: "50mb" }));
 
-app.use(express.urlencoded({ limit: "50mb"}));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20MB cap to avoid upstream 413
@@ -76,25 +73,51 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.post("/ipfs/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "file is required" });
-  if (!APILLON_API_KEY || !APILLON_API_SECRET) {
-    return res.status(500).json({ error: "Apillon credentials missing" });
-  }
-  if (!APILLON_BUCKET_ID) {
-    return res.status(500).json({ error: "APILLON_BUCKET_ID missing" });
+// Lightweight Pinata diagnostics endpoint to help debug credentials
+app.get("/pinata/health", async (_req, res) => {
+  const { PINATA_API_KEY, PINATA_API_SECRET } = process.env;
+  if (!PINATA_API_KEY || !PINATA_API_SECRET) {
+    return res.status(500).json({
+      ok: false,
+      error: "Pinata credentials missing (PINATA_API_KEY / PINATA_API_SECRET)",
+    });
   }
 
   try {
-    const { cid, raw } = await uploadToApillon(req.file.buffer, req.file.originalname, req.file.mimetype);
+    const checkAuth = await axios.get("https://api.pinata.cloud/data/testAuthentication", {
+      headers: {
+        pinata_api_key: PINATA_API_KEY,
+        pinata_secret_api_key: PINATA_API_SECRET,
+      }
+    });
+
+    res.json({
+      ok: true,
+      message: checkAuth.data.message
+    });
+  } catch (err) {
+    const detail = err?.response?.data || err?.message || String(err);
+    console.error("Pinata health error", detail);
+    res.status(502).json({ ok: false, error: "Pinata API error", detail });
+  }
+});
+
+app.post("/ipfs/upload", upload.single("file"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "file is required" });
+  if (!process.env.PINATA_API_KEY || !process.env.PINATA_API_SECRET) {
+    return res.status(500).json({ error: "Pinata credentials missing" });
+  }
+
+  try {
+    const { cid, raw } = await uploadToPinata(req.file.buffer, req.file.originalname, req.file.mimetype);
     if (!cid) {
-      console.error("Apillon upload returned no cid", raw);
+      console.error("Pinata upload returned no cid", raw);
       return res.status(502).json({ error: "Upload returned no CID", detail: raw });
     }
     res.json({ cid, raw });
   } catch (err) {
     const detail = err?.response?.data || err?.message || err?.toString();
-    console.error("Apillon upload error", detail, err?.stack);
+    console.error("Pinata upload error", detail, err?.stack);
     res.status(502).json({ error: "Upload failed", detail });
   }
 });

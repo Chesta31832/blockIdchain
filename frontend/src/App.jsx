@@ -148,7 +148,7 @@ export default function App() {
         <div>
           <p className="eyebrow">Decentralized PKI</p>
           <h1>BlockIDChain</h1>
-          <p>Issue and verify documents with Ganache + Apillon IPFS. Keys stay in your browser.</p>
+          <p>Issue and verify documents with Ganache + Pinata IPFS. Keys stay in your browser.</p>
         </div>
         <div className="pill">RSA · SHA-256 · IPFS · Ethereum</div>
       </header>
@@ -247,7 +247,7 @@ function IssueForm({ provider, selectedAccount, accounts, connectWallet }) {
       setStepState("Sign hash", "done");
 
       pushStep("Upload to IPFS", "active");
-      setStatus("Uploading to IPFS via Apillon...");
+      setStatus("Uploading to IPFS via Pinata...");
       const formData = new FormData();
       formData.append("file", file, file.name);
       const uploadRes = await axios.post(`${backendBase}/ipfs/upload`, formData, {
