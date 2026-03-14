@@ -69,6 +69,10 @@ function normalize(value) {
   return value;
 }
 
+app.get("/", (_req, res) => {
+  res.send("BlockIDChain Backend is running successfully!");
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
